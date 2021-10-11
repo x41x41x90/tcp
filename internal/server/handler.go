@@ -3,8 +3,10 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -40,10 +42,15 @@ func (s *Server) send() {
 		n                int
 		err              error
 	)
-	fmt.Printf("Input type message and message for sending\ntype message\tmessage\n")
 	command, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+	command = strings.Trim(command, "\n")
 	fmt.Print("Input number of sending: ")
 	fmt.Scan(&n)
+
+	if strings.HasPrefix(command, "file") {
+		s.file(command, n)
+		return
+	}
 
 	i := 0
 	s.connStorage.Range(
@@ -68,4 +75,68 @@ func (s *Server) send() {
 		},
 	)
 	fmt.Printf("command %s sended to %d clients\n", command, i)
+}
+
+func (s *Server) file(command string, n int) {
+	commands := strings.Split(command, " ")
+	if len(commands) < 3 {
+		s.logger.Println("not exist all parts")
+		return
+	}
+
+	data, err := ioutil.ReadFile(commands[1])
+	if err != nil {
+		s.logger.Printf("read src file: %s\n", err)
+		return
+	}
+
+	message := "file " + commands[2]
+
+	i := 0
+	s.connStorage.Range(
+		func(key, value interface{}) bool {
+			conn := value.(net.Conn)
+
+			conn.SetWriteDeadline(time.Now().Add(s.tcpTimeout))
+			if _, err = conn.Write([]byte(message + "\n")); err != nil {
+				fmt.Printf("addr: %s err: %s\n", conn.RemoteAddr().String(), err)
+				s.connStorage.Delete(key)
+				return true
+			}
+
+			conn.SetReadDeadline(time.Now().Add(s.tcpTimeout))
+			message, err = bufio.NewReader(conn).ReadString('\n')
+			if message != "" && message != "ready\n" {
+				err = fmt.Errorf(message)
+			}
+			if err != nil {
+				fmt.Printf("addr: %s err: %s\n", conn.RemoteAddr().String(), err)
+				s.connStorage.Delete(key)
+				return true
+			}
+
+			for len(data) > 1024 {
+				conn.SetWriteDeadline(time.Now().Add(s.tcpTimeout))
+				if _, err = conn.Write(data[:1024]); err != nil {
+					fmt.Printf("addr: %s err: %s\n", conn.RemoteAddr().String(), err)
+					s.connStorage.Delete(key)
+					return true
+				}
+				data = data[1024:]
+			}
+
+			fmt.Println(len(data))
+			conn.SetWriteDeadline(time.Now().Add(s.tcpTimeout))
+			if _, err = conn.Write(data); err != nil {
+				fmt.Printf("addr: %s err: %s\n", conn.RemoteAddr().String(), err)
+				s.connStorage.Delete(key)
+				return true
+			}
+
+			i++
+			return i < n
+		},
+	)
+	fmt.Printf("command %s sended to %d clients\n", command, i)
+
 }

